@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Users, User, Send } from "lucide-react";
+import { Users, User, Send, ReplyAll } from "lucide-react";
 import { useWebSocket } from "@/components/WebSocketContext";
+import { Pin } from "lucide-react";
+import { PinnedMessagePanel } from "./pinned-message-panel";
 
 interface Message {
   id: string;
@@ -15,6 +17,8 @@ interface Message {
   content: string;
   timestamp: string;
   name?: string;
+
+  replyTo?: string;
 }
 
 interface User {
@@ -34,12 +38,23 @@ export function ChatWindow({
   chat,
   isGroupChat,
 }: ChatWindowProps) {
+  const [error, setError] = useState("");
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [users, setUsers] = useState<User[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { chatSocket, isChatConnected, onlineUserIds } = useWebSocket();
+  const [showPinned, setShowPinned] = useState(false);
+  const [contextMenuMessage, setContextMenuMessage] = useState<Message | null>(
+    null
+  );
+  const [contextMenuPosition, setContextMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!chat.id) return;
@@ -113,6 +128,39 @@ export function ChatWindow({
   useEffect(() => {
     if (!chatId) return;
 
+    const fetchPinnedMessage = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) {
+          setError("No authentication token found");
+          return;
+        }
+
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL}/chat/pin/${chatId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        if (res.ok) {
+          const fetchedPinnedMessage = await res.json();
+          setPinnedMessages(fetchedPinnedMessage);
+          console.log("✅ Message fetch pinned message!");
+        } else {
+          console.error(
+            "❌ Failed to fetch pinned message:",
+            res.status,
+            await res.text()
+          );
+        }
+      } catch (err) {
+        console.error("❌ Error to fetch pinned message:", err);
+        setError("Error to fetch pinned message");
+      }
+    };
     const fetchChatHistory = async () => {
       try {
         const res = await fetch(
@@ -131,6 +179,7 @@ export function ChatWindow({
             chatId: msg.chatId || chatId,
             content: msg.content,
             timestamp: msg.timestamp || new Date().toISOString(),
+            replyTo: msg.replyTo,
             name: msg.name,
           }));
           setMessages(formattedMessages);
@@ -148,7 +197,7 @@ export function ChatWindow({
     };
 
     fetchChatHistory();
-
+    fetchPinnedMessage();
     // Fallback polling if WebSocket is not connected
     const interval = !isChatConnected
       ? setInterval(fetchChatHistory, 5000)
@@ -206,6 +255,7 @@ export function ChatWindow({
             chatId: msg.chatId,
             content: msg.content,
             timestamp: msg.timestamp,
+            replyTo: msg.replyTo,
             name: msg.name || getUserById(msg.ownerId).name,
           };
 
@@ -270,6 +320,39 @@ export function ChatWindow({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const createPinnedMessage = async (message: Message) => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setError("No authentication token found");
+        return;
+      }
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL}/chat/pin/${message.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (res.ok) {
+        console.log("✅ Message pinned!");
+      } else {
+        console.error(
+          "❌ Failed to pin message:",
+          res.status,
+          await res.text()
+        );
+      }
+    } catch (err) {
+      console.error("❌ Error pinning message:", err);
+      setError("Error to pin message");
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -287,6 +370,7 @@ export function ChatWindow({
       chatId,
       content: newMessage.trim(),
       timestamp: new Date().toISOString(),
+      replyTo: replyTo?.id,
     };
 
     try {
@@ -301,7 +385,9 @@ export function ChatWindow({
         content: newMessage.trim(),
         timestamp: message.timestamp,
         name: currentUser.name,
+        replyTo: replyTo || undefined,
       };
+      setReplyTo(null);
       setMessages((prev) => [...prev, optimisticMessage]);
       setNewMessage("");
     } catch (err) {
@@ -364,6 +450,18 @@ export function ChatWindow({
             {!isChatConnected && " (Disconnected)"}
           </p>
         </div>
+        <div className="relative inline-block">
+          <Pin
+            className="h-5 w-5 text-gray-400 cursor-pointer"
+            onClick={() => setShowPinned((prev) => !prev)}
+          />
+
+          {showPinned && (
+            <div className="absolute right-0 mt-2 z-50 p-10">
+              <PinnedMessagePanel pinnedMessages={pinnedMessages} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Messages */}
@@ -388,10 +486,18 @@ export function ChatWindow({
               {dateMessages.map((message) => {
                 const isCurrentUser = message.ownerId === currentUser.uid;
                 const sender = getUserById(message.ownerId);
+                const repliedMessage = message.replyTo
+                  ? messages.find((m) => m.id === message.replyTo)
+                  : null;
 
                 return (
                   <div
                     key={message.id}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setContextMenuMessage(message);
+                      setContextMenuPosition({ x: e.clientX, y: e.clientY });
+                    }}
                     className={`flex mb-4 ${
                       isCurrentUser ? "justify-end" : "justify-start"
                     }`}
@@ -423,6 +529,13 @@ export function ChatWindow({
                             : "bg-gray-100 text-gray-800 rounded-tl-none"
                         }`}
                       >
+                        {message.replyTo && (
+                          <div className="text-xs italic text-gray-500 mb-1 border-l-2 pl-2 border-gray-300">
+                            Replying to {repliedMessage?.name || "Unknown"}: "
+                            {repliedMessage?.content}"
+                          </div>
+                        )}
+
                         <p>{message.content}</p>
                         <p
                           className={`text-xs mt-1 ${
@@ -453,6 +566,57 @@ export function ChatWindow({
         )}
         <div ref={messagesEndRef} />
       </ScrollArea>
+
+      {replyTo && (
+        <div className="px-4 pt-2 pb-1 bg-gray-100 border-t text-sm text-gray-700 flex justify-between items-center">
+          <div>
+            Replying to <strong>{replyTo.name || "Unknown"}</strong>: "
+            {replyTo.content}"
+          </div>
+          <button
+            onClick={() => setReplyTo(null)}
+            className="text-xs text-blue-500 hover:underline ml-4"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {contextMenuMessage && contextMenuPosition && (
+        <div
+          className="absolute bg-white border rounded shadow-md z-50 text-sm"
+          style={{
+            top: contextMenuPosition.y,
+            left: contextMenuPosition.x,
+          }}
+          onMouseLeave={() => {
+            setContextMenuMessage(null);
+            setContextMenuPosition(null);
+          }}
+        >
+          <button
+            className="block px-4 py-2 hover:bg-gray-100 w-full text-left"
+            onClick={() => {
+              setReplyTo(contextMenuMessage); // ✅ reply
+              setContextMenuMessage(null);
+              setContextMenuPosition(null);
+            }}
+          >
+            Reply to message
+          </button>
+          <button
+            className="block px-4 py-2 hover:bg-gray-100 w-full text-left"
+            onClick={() => {
+              if (contextMenuMessage) {
+                createPinnedMessage(contextMenuMessage);
+              }
+              setContextMenuMessage(null);
+              setContextMenuPosition(null);
+            }}
+          >
+            Pin message
+          </button>
+        </div>
+      )}
 
       {/* Message Input */}
       <form
