@@ -11,6 +11,8 @@ import {
 interface WebSocketContextType {
   onlineUserIds: Set<string>;
   chatSocket: WebSocket | null;
+  groupChatSocket: WebSocket | null;
+  groupChatSocketData: any;
   isChatConnected: boolean;
   disconnect: () => void;
 }
@@ -18,6 +20,8 @@ interface WebSocketContextType {
 const WebSocketContext = createContext<WebSocketContextType>({
   onlineUserIds: new Set(),
   chatSocket: null,
+  groupChatSocket: null,
+  groupChatSocketData: null,
   isChatConnected: false,
   disconnect: () => {},
 });
@@ -29,6 +33,10 @@ interface WebSocketProviderProps {
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
   const [chatSocket, setChatSocket] = useState<WebSocket | null>(null);
+  const [groupChatSocket, setGroupChatSocket] = useState<WebSocket | null>(
+    null
+  );
+  const [groupChatSocketData, setGroupChatSocketData] = useState<any>(null);
   const [statusSocket, setStatusSocket] = useState<WebSocket | null>(null);
   const [isChatConnected, setIsChatConnected] = useState(false);
   const [shouldReconnect, setShouldReconnect] = useState(true);
@@ -48,6 +56,11 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     if (chatSocket) {
       chatSocket.close();
       setChatSocket(null);
+    }
+
+    if (groupChatSocket) {
+      groupChatSocket.close();
+      setGroupChatSocket(null);
     }
 
     setIsChatConnected(false);
@@ -132,6 +145,37 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
           setTimeout(connectWebSockets, 3000);
         }
       };
+
+      // --- Group Chat WebSocket ---
+      const groupChatWs = new WebSocket(
+        `${process.env.NEXT_PUBLIC_WS_URL}/chat/groupCreate${queryToken}`
+      );
+      setGroupChatSocket(groupChatWs);
+
+      groupChatWs.onopen = () => {
+        console.log("✅ Group chat WebSocket connected");
+      };
+
+      groupChatWs.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log("📩 Parsed group chat message:", data);
+          setGroupChatSocketData(data);
+        } catch (err) {
+          console.error("❌ Failed to parse group chat message:", err);
+        }
+      };
+
+      groupChatWs.onerror = (error) => {
+        console.error("❌ Group chat WebSocket error:", error);
+      };
+
+      groupChatWs.onclose = () => {
+        console.warn("⚠️ Group chat WebSocket closed");
+        if (shouldReconnect) {
+          setTimeout(connectWebSockets, 3000);
+        }
+      };
     };
 
     if (token) {
@@ -146,7 +190,14 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
   return (
     <WebSocketContext.Provider
-      value={{ onlineUserIds, chatSocket, isChatConnected, disconnect }}
+      value={{
+        onlineUserIds,
+        chatSocket,
+        groupChatSocket,
+        groupChatSocketData,
+        isChatConnected,
+        disconnect,
+      }}
     >
       {children}
     </WebSocketContext.Provider>

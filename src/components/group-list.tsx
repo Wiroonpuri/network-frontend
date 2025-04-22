@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Users, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GroupMembersDialog } from "@/components/group-members-dialog";
+import { useWebSocket } from "@/components/WebSocketContext";
 
 interface Group {
   id: string;
@@ -34,6 +35,8 @@ export function GroupList({
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<
     string[] | null
   >(null);
+
+  const { groupChatSocket } = useWebSocket();
 
   // Helper function to truncate group name
   const truncateGroupName = (name: string, maxLength: number = 10) => {
@@ -109,6 +112,29 @@ export function GroupList({
 
     return () => clearInterval(interval);
   }, [currentUserId]);
+
+  useEffect(() => {
+    if (!groupChatSocket) return;
+
+    const handleNewGroup = (event: MessageEvent) => {
+      try {
+        const newGroup: Group = JSON.parse(event.data);
+        if (newGroup.allowedUser.includes(currentUserId)) {
+          setJoinedGroups((prev) => [...prev, newGroup]);
+        } else {
+          setUnjoinedGroups((prev) => [...prev, newGroup]);
+        }
+      } catch (err) {
+        console.error("Error parsing new group:", err);
+      }
+    };
+
+    groupChatSocket.addEventListener("message", handleNewGroup);
+
+    return () => {
+      groupChatSocket.removeEventListener("message", handleNewGroup);
+    };
+  }, [groupChatSocket, currentUserId]);
 
   const handleJoinGroup = async (groupId: string) => {
     const token = localStorage.getItem("token");
