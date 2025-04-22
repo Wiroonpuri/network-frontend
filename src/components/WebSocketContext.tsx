@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
   ReactNode,
+  useRef,
 } from "react";
 
 interface WebSocketContextType {
@@ -44,10 +45,16 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     typeof window !== "undefined" ? localStorage.getItem("token") : null
   );
 
+  const tokenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
   const disconnect = () => {
     console.log("🔌 Disconnecting WebSockets");
     setShouldReconnect(false);
-
+    setToken(null);
     if (statusSocket) {
       statusSocket.close();
       setStatusSocket(null);
@@ -69,6 +76,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   useEffect(() => {
     const handleStorageChange = () => {
       const updatedToken = localStorage.getItem("token");
+      console.log("📦 Storage changed, token:", updatedToken);
       setToken(updatedToken);
     };
 
@@ -79,13 +87,20 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   }, []);
 
   useEffect(() => {
+    let reconnectTimeout: NodeJS.Timeout | null = null;
     const connectWebSockets = () => {
-      if (!token) {
-        console.log("No token found, skipping WebSocket connection");
+      console.log(`------------------------${shouldReconnect}`);
+      if (!tokenRef.current || !shouldReconnect) {
+        console.log(
+          "🚫 Skipping WebSocket connection - token:",
+          token,
+          "shouldReconnect:",
+          shouldReconnect
+        );
         return;
       }
 
-      setShouldReconnect(true);
+      console.log("🔗 Attempting WebSocket connections with token:", token);
       const queryToken = `?${token}`;
 
       // --- Status WebSocket ---
@@ -113,8 +128,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
       statusWs.onclose = () => {
         console.warn("⚠️ Status WebSocket closed");
-        if (shouldReconnect) {
-          setTimeout(connectWebSockets, 3000);
+        if (shouldReconnect && token) {
+          console.log("🔄 Scheduling reconnect for status WebSocket");
+          reconnectTimeout = setTimeout(connectWebSockets, 3000);
         }
       };
 
@@ -141,8 +157,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       chatWs.onclose = () => {
         console.warn("⚠️ Chat WebSocket closed");
         setIsChatConnected(false);
-        if (shouldReconnect) {
-          setTimeout(connectWebSockets, 3000);
+        if (shouldReconnect && token) {
+          console.log("🔄 Scheduling reconnect for chat WebSocket");
+          reconnectTimeout = setTimeout(connectWebSockets, 3000);
         }
       };
 
@@ -172,21 +189,33 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
       groupChatWs.onclose = () => {
         console.warn("⚠️ Group chat WebSocket closed");
-        if (shouldReconnect) {
-          setTimeout(connectWebSockets, 3000);
+        if (shouldReconnect && token) {
+          console.log("🔄 Scheduling reconnect for group chat WebSocket");
+          reconnectTimeout = setTimeout(connectWebSockets, 3000);
         }
       };
     };
 
-    if (token) {
+    if (token && shouldReconnect) {
+      console.log("🟢 Starting WebSocket connections");
       connectWebSockets();
+    } else {
+      console.log(
+        "🔴 WebSocket connections not started - token:",
+        token,
+        "shouldReconnect:",
+        shouldReconnect
+      );
     }
 
     return () => {
+      console.log("🧹 Cleaning up WebSocket connections");
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
       disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, shouldReconnect]);
 
   return (
     <WebSocketContext.Provider
