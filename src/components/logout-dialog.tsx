@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { useWebSocket } from "./WebSocketContext"
 
 interface LogoutDialogProps {
   open: boolean
@@ -20,9 +21,10 @@ interface LogoutDialogProps {
 
 export function LogoutDialog({ open, onOpenChange, currentUserId }: LogoutDialogProps) {
   const router = useRouter()
-
+  const { disconnect } = useWebSocket();
   const handleLogout = () => {
     // Update user status to offline
+    disconnect();
     const users = JSON.parse(localStorage.getItem("users") || "[]")
     const updatedUsers = users.map((u: any) => (u.id === currentUserId ? { ...u, status: "offline" } : u))
     localStorage.setItem("users", JSON.stringify(updatedUsers))

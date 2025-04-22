@@ -8,21 +8,20 @@ import {
   ReactNode,
 } from "react";
 
-// Define the shape of the context value
 interface WebSocketContextType {
   onlineUserIds: Set<string>;
   chatSocket: WebSocket | null;
   isChatConnected: boolean;
+  disconnect: () => void;
 }
 
-// Create the context with a default value
 const WebSocketContext = createContext<WebSocketContextType>({
   onlineUserIds: new Set(),
   chatSocket: null,
   isChatConnected: false,
+  disconnect: () => {},
 });
 
-// Provider component
 interface WebSocketProviderProps {
   children: ReactNode;
 }
@@ -30,15 +29,34 @@ interface WebSocketProviderProps {
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
   const [chatSocket, setChatSocket] = useState<WebSocket | null>(null);
+  const [statusSocket, setStatusSocket] = useState<WebSocket | null>(null);
   const [isChatConnected, setIsChatConnected] = useState(false);
+  const [shouldReconnect, setShouldReconnect] = useState(true);
   const [token, setToken] = useState<string | null>(
-    localStorage.getItem("token")
+    typeof window !== "undefined" ? localStorage.getItem("token") : null
   );
 
+  const disconnect = () => {
+    console.log("🔌 Disconnecting WebSockets");
+    setShouldReconnect(false);
+
+    if (statusSocket) {
+      statusSocket.close();
+      setStatusSocket(null);
+    }
+
+    if (chatSocket) {
+      chatSocket.close();
+      setChatSocket(null);
+    }
+
+    setIsChatConnected(false);
+  };
+
   useEffect(() => {
-    // Listen for token changes in localStorage
     const handleStorageChange = () => {
-      setToken(localStorage.getItem("token"));
+      const updatedToken = localStorage.getItem("token");
+      setToken(updatedToken);
     };
 
     window.addEventListener("storage", handleStorageChange);
@@ -48,21 +66,20 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   }, []);
 
   useEffect(() => {
-    let statusWs: WebSocket | null = null;
-    let chatWs: WebSocket | null = null;
-
     const connectWebSockets = () => {
       if (!token) {
-        console.log("No token available, skipping WebSocket connections");
+        console.log("No token found, skipping WebSocket connection");
         return;
       }
 
+      setShouldReconnect(true);
       const queryToken = `?${token}`;
 
-      // Online Status WebSocket
-      statusWs = new WebSocket(
+      // --- Status WebSocket ---
+      const statusWs = new WebSocket(
         `${process.env.NEXT_PUBLIC_WS_URL}/chat/onlineStatus${queryToken}`
       );
+      setStatusSocket(statusWs);
 
       statusWs.onopen = () => {
         console.log("✅ Online status WebSocket connected");
@@ -83,13 +100,16 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
       statusWs.onclose = () => {
         console.warn("⚠️ Status WebSocket closed");
-        setTimeout(connectWebSockets, 3000); // Reconnect after 3 seconds
+        if (shouldReconnect) {
+          setTimeout(connectWebSockets, 3000);
+        }
       };
 
-      // Chat WebSocket
-      chatWs = new WebSocket(
+      // --- Chat WebSocket ---
+      const chatWs = new WebSocket(
         `${process.env.NEXT_PUBLIC_WS_URL}/chat${queryToken}`
       );
+      setChatSocket(chatWs);
 
       chatWs.onopen = () => {
         console.log("✅ Chat WebSocket connected");
@@ -98,7 +118,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
       chatWs.onmessage = (event) => {
         console.log("📩 Chat message received:", event.data);
-        // You can add additional logic here if needed
       };
 
       chatWs.onerror = (error) => {
@@ -109,10 +128,10 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       chatWs.onclose = () => {
         console.warn("⚠️ Chat WebSocket closed");
         setIsChatConnected(false);
-        setTimeout(connectWebSockets, 3000); // Reconnect after 3 seconds
+        if (shouldReconnect) {
+          setTimeout(connectWebSockets, 3000);
+        }
       };
-
-      setChatSocket(chatWs);
     };
 
     if (token) {
@@ -120,27 +139,20 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     }
 
     return () => {
-      if (statusWs) {
-        statusWs.close();
-      }
-      if (chatWs) {
-        chatWs.close();
-        setIsChatConnected(false);
-      }
-      setChatSocket(null);
+      disconnect();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   return (
     <WebSocketContext.Provider
-      value={{ onlineUserIds, chatSocket, isChatConnected }}
+      value={{ onlineUserIds, chatSocket, isChatConnected, disconnect }}
     >
       {children}
     </WebSocketContext.Provider>
   );
 }
 
-// Hook to use the context
 export const useWebSocket = () => {
   const context = useContext(WebSocketContext);
   if (!context) {

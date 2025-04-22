@@ -260,25 +260,29 @@ export function ChatWindow({
           };
 
           setMessages((prev) => {
-            // Replace optimistic message or avoid duplicates
-            const isDuplicate = prev.some(
+            const alreadyExists = prev.some((m) => m.id === newMessage.id);
+            if (alreadyExists) {
+              console.log("Duplicate message (same ID), skip:", newMessage);
+              return prev;
+            }
+          
+            const isOptimisticMatch = prev.some(
               (m) =>
                 m.content === newMessage.content &&
                 m.ownerId === newMessage.ownerId &&
                 Math.abs(
-                  new Date(m.timestamp).getTime() -
-                    new Date(newMessage.timestamp).getTime()
-                ) < 1000 // Within 1 second
+                  new Date(m.timestamp).getTime() - new Date(newMessage.timestamp).getTime()
+                ) < 2000
             );
-            if (isDuplicate) {
+          
+            if (isOptimisticMatch) {
               console.log("Replacing optimistic message:", newMessage);
               return prev.map((m) =>
                 m.content === newMessage.content &&
                 m.ownerId === newMessage.ownerId &&
                 Math.abs(
-                  new Date(m.timestamp).getTime() -
-                    new Date(newMessage.timestamp).getTime()
-                ) < 1000
+                  new Date(m.timestamp).getTime() - new Date(newMessage.timestamp).getTime()
+                ) < 2000
                   ? newMessage
                   : m
               );
